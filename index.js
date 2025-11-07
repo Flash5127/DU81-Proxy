@@ -1,9 +1,19 @@
-const express = require("express");
-const fetch = require("node-fetch");
+import express from "express";
+import fetch from "node-fetch";
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Fetch games for a user
+// ---------------------
+// Helper: safe JSON fetch
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+// ---------------------
+// 1️⃣ Fetch user games
 app.get("/v2/users/:userId/games", async (req, res) => {
   try {
     const { userId } = req.params;
@@ -12,39 +22,66 @@ app.get("/v2/users/:userId/games", async (req, res) => {
     let url = `https://games.roblox.com/v2/users/${userId}/games?accessFilter=${accessFilter}&sortOrder=${sortOrder}&limit=${limit}`;
     if (cursor) url += `&cursor=${cursor}`;
 
-    const response = await fetch(url);
-    const data = await response.json();
-
+    const data = await fetchJson(url);
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch Roblox API" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Fetch gamepasses for a user
+// ---------------------
+// 2️⃣ Fetch gamepasses
 app.get("/gamepasses/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const url = `https://games.roblox.com/v1/users/${userId}/inventory/asset-type/9?sortOrder=Asc&limit=100`;
-    const response = await fetch(url);
-    const data = await response.json();
-    res.json(data);
+    const apiUrl = `https://apis.roblox.com/game-passes/v1/users/${userId}/game-passes`;
+    const data = await fetchJson(apiUrl);
+
+    // Transform to Lua-friendly format
+    const gamePasses = (data.data || []).map(pass => ({
+      id: pass.id,
+      name: pass.name,
+      price: pass.price || 0,
+      creatorTargetId: pass.creator.id
+    }));
+
+    res.json({ gamePasses });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch Roblox API" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Fetch avatar assets (clothes)
+// ---------------------
+// 3️⃣ Fetch avatar assets / clothes
 app.get("/clothes/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const url = `https://avatar.roblox.com/v1/users/${userId}/currently-wearing`;
-    const response = await fetch(url);
-    const data = await response.json();
-    res.json(data);
+    const categories = ["tshirts", "shirts", "pants"];
+    let items = {};
+
+    for (const category of categories) {
+      const data = await fetchJson(
+        `https://avatar.roblox.com/v1/users/${userId}/currently-wearing`
+      );
+
+      // Transform to Lua-friendly format
+      items[category] = {
+        items: (data.data || []).map(asset => ({
+          id: asset.assetId,
+          name: asset.name,
+          price: asset.price || 0,
+          creatorTargetId: asset.creator.id
+        }))
+      };
+    }
+
+    res.json({ items });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch Roblox API" });
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Roblox proxy running on port ${PORT}`));
+// ---------------------
+app.listen(PORT, () => {
+  console.log(`DU81-Proxy running on port ${PORT}`);
+});
