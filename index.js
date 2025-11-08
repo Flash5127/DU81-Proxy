@@ -1,69 +1,80 @@
-import express from "express";
-import fetch from "node-fetch";
-import cors from "cors";
-
+// index.js
+const express = require("express");
+const fetch = require("node-fetch");
 const app = express();
-app.use(cors());
 
-// === Gamepasses endpoint ===
-app.get("/gamepasses/:userId", async (req, res) => {
-  const { userId } = req.params;
-
-  const endpoints = [
-    `https://games.roblox.com/v1/users/${userId}/game-passes?limit=100`,
-    `https://apis.roblox.com/game-passes/v1/users/${userId}/game-passes?count=100`
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(url);
-      if (r.ok) {
-        const data = await r.text();
-        res.set("Access-Control-Allow-Origin", "*");
-        res.type("application/json");
-        return res.status(r.status).send(data);
-      }
-    } catch (err) {
-      console.error("Gamepass fetch failed:", err);
+// ---- Helper function to fetch data from Roblox ----
+async function fetchRobloxJSON(url) {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "RobloxProxy/1.0",
+      "Accept": "application/json"
     }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Roblox fetch failed: ${text}`);
   }
+  return await response.json();
+}
 
-  res.status(502).json({ error: "Failed to fetch gamepasses" });
-});
+// ---- Gamepasses Route ----
+app.get("/gamepasses/:id", async (req, res) => {
+  const userId = req.params.id;
+  try {
+    // Roblox API endpoint for user gamepasses
+    const robloxUrl = `https://games.roblox.com/v1/users/${userId}/game-passes`;
+    const data = await fetchRobloxJSON(robloxUrl);
 
-// === Clothes endpoint ===
-app.get("/clothes/:userId", async (req, res) => {
-  const { userId } = req.params;
+    // Convert to format Lua expects
+    const gamePasses = (data.data || []).map(pass => ({
+      id: pass.id,
+      name: pass.name,
+      price: pass.price || 0
+    }));
 
-  const endpoints = [
-    `https://catalog.roblox.com/v1/users/${userId}/assets`,
-    `https://avatar.roblox.com/v1/users/${userId}/currently-wearing`
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(url);
-      if (r.ok) {
-        const data = await r.text();
-        res.set("Access-Control-Allow-Origin", "*");
-        res.type("application/json");
-        return res.status(r.status).send(data);
-      }
-    } catch (err) {
-      console.error("Clothes fetch failed:", err);
-    }
+    res.json({ gamePasses });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch gamepasses" });
   }
-
-  res.status(502).json({ error: "Failed to fetch clothes" });
 });
 
-// === Root ===
-app.get("/", (req, res) => {
-  res.send("✅ Roblox proxy is online!");
+// ---- Avatar Items / Clothes Route ----
+app.get("/clothes/:id", async (req, res) => {
+  const userId = req.params.id;
+  try {
+    // Roblox API endpoint for user assets
+    const robloxUrl = `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100`;
+    const data = await fetchRobloxJSON(robloxUrl);
+
+    // Build Lua-compatible structure
+    const items = { shirts: { items: [] }, pants: { items: [] }, tshirts: { items: [] } };
+
+    (data.data || []).forEach(asset => {
+      let category = "Asset";
+      if (asset.assetType && asset.assetType.id === 11) category = "Shirt";
+      if (asset.assetType && asset.assetType.id === 12) category = "Pants";
+      if (asset.assetType && asset.assetType.id === 13) category = "T-Shirt";
+
+      items[category.toLowerCase()]?.items.push({
+        id: asset.assetId,
+        name: asset.name,
+        price: asset.price || 0,
+        creatorTargetId: asset.creator?.id || 0
+      });
+    });
+
+    res.json({ items });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch avatar items" });
+  }
 });
 
-// === Start ===
-const port = process.env.PORT || 10000;
-app.listen(port, () => {
-  console.log(`Proxy running on port ${port}`);
+// ---- Start Server ----
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Proxy running on port ${PORT}`);
+  console.log(`Available at https://du81-proxy.onrender.com`);
 });
